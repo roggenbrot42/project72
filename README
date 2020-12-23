@@ -1,0 +1,29 @@
+Project72
+===========
+
+Project72 will be a Sokoban player/solver.
+Currently, it's written in Python and uses curses for display of the maze.
+
+The current code allows for an arbitrary amount of goals, as long as they can fit inside the maze.
+The game logic is implemented, but surely not very efficiently.
+
+The current computer player performs a true random walk.
+
+Future improvements I have in mind for the random player are:
++ check if a move is idempotent in the sense that it didn't change anything
++ as long as nothing was changed, mark a place as visited (0-1goback-2dontreturn) to reduce unnecessary moves
++ find all *reachable* places in the maze
++ store all moves
+
+Moving away from the random player, to a more intelligent solution:
++ (this might be complicated) check if a move is reversible
+
++ start out with selecting next best stone
+1 find all directions in which it can be pushed
+2 path to every place around the stone corresponding to a push direction
+3 push the stone
+4 goto 3
+
++ memorize all previous game states (excluding ones that didn't introduce change)
++ if state equals a previous one with fewer moves, drop current path and proceed on the previous path.
+
