@@ -1,8 +1,11 @@
 import argparse
 import re
 import curses
+from curses import wrapper
 import random
 import time
+import copy
+import abc
 
 class GameItem:
     x = -1
@@ -30,7 +33,7 @@ class Goal(GameItem):
     def __str__(self):
         return "X"
 
-class Player(GameItem):
+class PlayerItem(GameItem):
     type = "Player"
     
     def __str__(self):
@@ -47,16 +50,19 @@ class IllegalMoveException(Exception):
 
 class GameState:
 
-    pp = Player(-1,-1)
+    pp = PlayerItem(-1,-1)
     maze = None
+    visited = None
     stones = list()
     goals = list()
     sizex = -1
     sizey = -1
+    obama = False # Merkel
 
     def move_player(self,xdir,ydir):
         x = self.pp.x+xdir
         y = self.pp.y+ydir
+        self.obama = False
 
         if x > self.sizex or x < 1:
             raise IllegalMoveException
@@ -72,18 +78,31 @@ class GameState:
                 raise IllegalMoveException
             else:
                 stone.x = x + xdir
-                stone.y = y + ydir 
+                stone.y = y + ydir
+                self.obama = True #we changed something
         except ValueError:
             pass
 
         self.pp.x = x
         self.pp.y = y
+        if self.obama == False:
+            self.visited[y][x] += 1
+        else:
+            self.reset_visited()
+    
+    def reset_visited(self):
+        for i,row in enumerate(self.visited):
+            for c,val in enumerate(row):
+                if type(self.visited[i][c]) == int:
+                    self.visited[i][c] = 0
+        self.visited[self.pp.y][self.pp.x] = 1
+
 
     def load(self,file):
         sizex = int(file.readline())
         sizey = int(file.readline())
         maze = [['#' for x in range(sizex+2)] for y in range(sizey+2)]
-        pp = Player(-1,-1)
+        pp = PlayerItem(-1,-1)
         goals = list()
         stones = list()
 
@@ -116,6 +135,8 @@ class GameState:
             raise Exception("Error: Number of goals and stones is not equal")
     
         self.maze = maze
+        self.visited = [[0 if el == '.' else el for el in row] for row in self.maze]
+        self.visited[pp.y][pp.x] = 1
         self.pp = pp
         self.stones = stones
         self.goals = goals
@@ -147,80 +168,115 @@ class GameState:
         for line in self.maze:
             str = str + '\n' + ''.join(line)
         screen.addstr(0, 0,str)
+
+        #color = curses.COLOR_BLACK
+        for y,line in enumerate(self.visited,0):
+            for x,place in enumerate(line):
+                if place == 0:
+                    color = curses.COLOR_BLACK
+                elif place == 1:
+                    color = curses.COLOR_BLUE
+                elif place == 2:
+                    color = curses.COLOR_RED
+                else:
+                    continue
+                screen.addch(y+1,x,f'{place}')
+        
         for g in self.goals:
             screen.addstr(g.y+1,g.x,"X")
         screen.addstr(self.pp.y+1,self.pp.x,"P")
         for st in self.stones:
             screen.addstr(st.y+1,st.x,"O")
 
-def random_player(file,stdscr,game):
-    filebase = file.tell()
-    lost = 0
-    for i in range(1000):
-        file.seek(filebase)
+class AbstractPlayer:
+    __metaclass__ = abc.ABCMeta
+
+    @abc.abstractmethod
+    def play(self,file,stdscr,game):
+        pass
+
+class RandomPlayer(AbstractPlayer):
+    @staticmethod
+    def check_visited(game,dx,dy):
+        mvx = game.pp.x + dx
+        mvy = game.pp.y + dy
+        if game.visited[mvy][mvx] == 2:
+            return False
+        else:
+            return True
+
+    def play(self,file,stdscr,game):
+        filebase = file.tell()
+        lost = 0
+        for i in range(1000):
+            file.seek(filebase)
+            game.load(args.mazefile)
+
+            game.render(stdscr)
+            stdscr.refresh()
+            stdscr.addstr(13,0,"Lost: {}".format(lost))
+            
+            random.seed(time.time())
+
+            stuck = 0
+
+            while game.is_won() == False:
+                # Computer Random Player
+            
+                mv = random.randint(0,3)
+            
+                try:
+                    if mv == 0 and RandomPlayer.check_visited(game,0,-1): #down
+                        game.move_player(0,-1)
+                    elif mv == 1 and RandomPlayer.check_visited(game,0,1): #up
+                        game.move_player(0,1)
+                    elif mv == 2 and RandomPlayer.check_visited(game,-1,0): #left
+                        game.move_player(-1,0)
+                    elif mv == 3 and RandomPlayer.check_visited(game,1,0): #right
+                        game.move_player(1,0)
+                    else:
+                        stuck += 1
+                except IllegalMoveException:
+                    continue
+                game.render(stdscr)
+                stdscr.refresh()
+                time.sleep(1/3)
+                if game.is_won():
+                    break
+                elif game.is_lost() or stuck == 4:
+                    lost += 1
+                    break
+class HumanPlayer(AbstractPlayer):
+    def play(self,file,stdscr,game):
         game.load(args.mazefile)
 
         game.render(stdscr)
         stdscr.refresh()
-        stdscr.addstr(13,0,"Lost: {}".format(lost))
-        
-        random.seed(time.time())
-
-        while game.is_won() == False:
-            # Computer Random Player
-        
-            mv = random.randint(0,3)
-        
+        while True:
+            c = stdscr.getch()
             try:
-                if mv == 0:
+                if c == curses.KEY_UP:
                     game.move_player(0,-1)
-                elif mv == 1:
+                elif c == curses.KEY_DOWN:
                     game.move_player(0,1)
-                elif mv == 2:
+                elif c == curses.KEY_LEFT:
                     game.move_player(-1,0)
-                elif mv == 3:
+                elif c == curses.KEY_RIGHT:
                     game.move_player(1,0)
+                elif c == ord('q'):
+                    break  # Exit the while loop
+                else:
+                    pass
             except IllegalMoveException:
-                continue
+                pass
             game.render(stdscr)
-            stdscr.refresh()
-            time.sleep(1/120)
+
             if game.is_won():
+                stdscr.erase()
                 break
             if game.is_lost():
-                lost += 1
+                stdscr.erase()
                 break
-
-def human_player(file,stdscr,game):
-    game.load(args.mazefile)
-
-    game.render(stdscr)
-    stdscr.refresh()
-    while True:
-        c = stdscr.getch()
-        try:
-            if c == curses.KEY_UP:
-                game.move_player(0,-1)
-            elif c == curses.KEY_DOWN:
-                game.move_player(0,1)
-            elif c == curses.KEY_LEFT:
-                game.move_player(-1,0)
-            elif c == curses.KEY_RIGHT:
-                game.move_player(1,0)
-            elif c == ord('q'):
-                break  # Exit the while loop
-            else:
-                pass
-        except IllegalMoveException:
-            pass
-        game.render(stdscr)
-
-        if game.is_won():
-            stdscr.erase()
-            break
-        if game.is_lost():
-            stdscr.erase()
-            break
 
 if __name__ == "__main__":
     stdscr = curses.initscr()
@@ -242,8 +298,11 @@ if __name__ == "__main__":
 
     curses.curs_set(0)
     game = GameState()
+
+    #player = HumanPlayer()
+    player = RandomPlayer()
     
-    random_player(args.mazefile,stdscr,game)
+    player.play(args.mazefile,stdscr,game)
 
     curses.nocbreak()
     stdscr.keypad(False)
