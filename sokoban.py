@@ -279,16 +279,11 @@ class HumanPlayer(AbstractPlayer):
                 break
 
 if __name__ == "__main__":
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    stdscr.keypad(True)
-
-
     print("Project72 Sokoban Game Solver")
     
     parser = argparse.ArgumentParser()
     parser.add_argument('mazefile', type=argparse.FileType('r',encoding='utf8'))
+    parser.add_argument('--human',action='store_true',help="switch to human player")
     args = parser.parse_args()
 
     version = args.mazefile.readline().rstrip()
@@ -296,11 +291,18 @@ if __name__ == "__main__":
         print(version)
         raise Exception("Invalid filetype")
 
+    stdscr = curses.initscr()
+    curses.noecho()
+    curses.cbreak()
+    stdscr.keypad(True)
+
     curses.curs_set(0)
     game = GameState()
 
-    #player = HumanPlayer()
-    player = RandomPlayer()
+    if args.human == True:
+        player = HumanPlayer()
+    else:
+        player = RandomPlayer()
     
     player.play(args.mazefile,stdscr,game)
 
