@@ -10,7 +10,8 @@ import abc
 class GameItem:
     x = -1
     y = -1
-    type == "None"
+    type = "None"
+    sym = "None"
 
     def __init__(self,x,y):
         self.x = x
@@ -26,24 +27,24 @@ class GameItem:
             return False
         else:
             return (self.x,self.y)<=(other.x,other.y)
+    def __str__(self):
+        return self.sym
 
 class Goal(GameItem):
-    type = "Player"
+    type = "Goal"
+    sym = '▢'
 
-    def __str__(self):
-        return "X"
+class FilledGoal(GameItem):
+    type = "FilledGoal"
+    sym = '▣'
 
 class PlayerItem(GameItem):
     type = "Player"
-    
-    def __str__(self):
-        return "P"
+    sym = '♕'
 
 class Stone(GameItem):
     type = "Stone"
-    
-    def __str__(self):
-        return "O"
+    sym = '◇'
 
 class IllegalMoveException(Exception):
     pass
@@ -69,12 +70,12 @@ class GameState:
         if y > self.sizey or y < 1:
             raise IllegalMoveException
         
-        if self.maze[y][x] == '#':
+        if self.maze[y][x] == '■':
             raise IllegalMoveException
         try:
             idx = self.stones.index(Stone(x,y))
             stone = self.stones[idx]
-            if self.maze[y+ydir][x+xdir] == '#': 
+            if self.maze[y+ydir][x+xdir] == '■': 
                 raise IllegalMoveException
             else:
                 stone.x = x + xdir
@@ -101,13 +102,13 @@ class GameState:
     def load(self,file):
         sizex = int(file.readline())
         sizey = int(file.readline())
-        maze = [['#' for x in range(sizex+2)] for y in range(sizey+2)]
+        maze = [['■' for x in range(sizex+2)] for y in range(sizey+2)]
         pp = PlayerItem(-1,-1)
         goals = list()
         stones = list()
 
-        pat_np = re.compile("[.#]{{1,{}}}".format(sizex))
-        pat_p = re.compile("[.XOP#]{{1,{}}}".format(sizex))
+        pat_np = re.compile("[.■]{{1,{}}}".format(sizex))
+        pat_p = re.compile("[.■"+PlayerItem.sym+Stone.sym+Goal.sym+"]{{1,{}}}".format(sizex))
 
         ln = 1
         for tmp in file:
@@ -117,16 +118,16 @@ class GameState:
                     raise Exception("Malformed row, invalid character or length! Line number: {} length: {}".format(ln,len(line)))
                 else:
                     for c,val in enumerate(line,1):
-                        if val == 'P':
+                        if val == PlayerItem.sym:
                             pp.x = c
                             pp.y = ln
-                            line = line.replace("P",".")
-                        elif val == 'O':
+                            line = line.replace(PlayerItem.sym,".")
+                        elif val == Stone.sym:
                             stones += [Stone(c,ln)]
-                            line = line.replace("O",".",1)
-                        elif val == 'X':
+                            line = line.replace(Stone.sym,".",1)
+                        elif val == Goal.sym:
                             goals += [Goal(c,ln)]
-                            line = line.replace("X",".",1)
+                            line = line.replace(Goal.sym,".",1)
 
             linelist = list(line)
             maze[ln][1:1+len(linelist)] = linelist
@@ -153,40 +154,40 @@ class GameState:
         for st in self.stones:
             if st in self.goals:
                 continue
-            if self.maze[st.y-1][st.x] == '#' and self.maze[st.y][st.x-1] == '#': #top left corner
+            if self.maze[st.y-1][st.x] == '■' and self.maze[st.y][st.x-1] == '■': #top left corner
                 return True
-            if self.maze[st.y-1][st.x] == '#' and self.maze[st.y][st.x+1] == '#': #top right corner
+            if self.maze[st.y-1][st.x] == '■' and self.maze[st.y][st.x+1] == '■': #top right corner
                 return True
-            if self.maze[st.y+1][st.x] == '#' and self.maze[st.y][st.x+1] == '#': #bottom right corner
+            if self.maze[st.y+1][st.x] == '■' and self.maze[st.y][st.x+1] == '■': #bottom right corner
                 return True
-            if self.maze[st.y+1][st.x] == '#' and self.maze[st.y][st.x-1] == '#': #bottom left corner
+            if self.maze[st.y+1][st.x] == '■' and self.maze[st.y][st.x-1] == '■': #bottom left corner
                 return True
         return False
     
     def render(self,screen): #this is shit, should be replaced by render tree for more complex games
-        str = ""
-        for line in self.maze:
-            str = str + '\n' + ''.join(line)
-        screen.addstr(0, 0,str)
 
-        #color = curses.COLOR_BLACK
+        for y,line in enumerate(self.maze,0):
+            screen.addstr(y, 0,"".join(line))
+
+        color = curses.COLOR_BLACK
         for y,line in enumerate(self.visited,0):
             for x,place in enumerate(line):
+                if type(place) != int:
+                    continue
                 if place == 0:
                     color = curses.COLOR_BLACK
                 elif place == 1:
                     color = curses.COLOR_BLUE
-                elif place == 2:
+                elif place >= 2:
                     color = curses.COLOR_RED
                 else:
                     continue
-                screen.addch(y+1,x,f'{place}')
-        
+                screen.addch(y,x,f'{place}',color)
         for g in self.goals:
-            screen.addstr(g.y+1,g.x,"X")
-        screen.addstr(self.pp.y+1,self.pp.x,"P")
+            screen.addstr(g.y,g.x,Goal.sym)
+        screen.addstr(self.pp.y,self.pp.x,PlayerItem.sym)
         for st in self.stones:
-            screen.addstr(st.y+1,st.x,"O")
+            screen.addstr(st.y,st.x,Stone.sym)
 
 class AbstractPlayer:
     __metaclass__ = abc.ABCMeta
@@ -200,7 +201,7 @@ class RandomPlayer(AbstractPlayer):
     def check_visited(game,dx,dy):
         mvx = game.pp.x + dx
         mvy = game.pp.y + dy
-        if game.visited[mvy][mvx] == 2:
+        if game.visited[mvy][mvx] >= 2:
             return False
         else:
             return True
@@ -236,8 +237,9 @@ class RandomPlayer(AbstractPlayer):
                         game.move_player(1,0)
                     else:
                         stuck += 1
-                except IllegalMoveException:
+                except (IllegalMoveException,TypeError):
                     continue
+
                 game.render(stdscr)
                 stdscr.refresh()
                 time.sleep(1/3)
@@ -278,6 +280,23 @@ class HumanPlayer(AbstractPlayer):
                 stdscr.erase()
                 break
 
+def game(stdscr,args):
+    curses.curs_set(0)
+    curses.use_default_colors()
+    game = GameState()
+
+    if args.human == True:
+        player = HumanPlayer()
+    else:
+        player = RandomPlayer()
+    
+    player.play(args.mazefile,stdscr,game)
+    
+    if game.is_won():
+        print("Won!!!")
+    else:
+        print("Lost :(")
+
 if __name__ == "__main__":
     print("Project72 Sokoban Game Solver")
     
@@ -291,27 +310,5 @@ if __name__ == "__main__":
         print(version)
         raise Exception("Invalid filetype")
 
-    stdscr = curses.initscr()
-    curses.noecho()
-    curses.cbreak()
-    stdscr.keypad(True)
-
-    curses.curs_set(0)
-    game = GameState()
-
-    if args.human == True:
-        player = HumanPlayer()
-    else:
-        player = RandomPlayer()
-    
-    player.play(args.mazefile,stdscr,game)
-
-    curses.nocbreak()
-    stdscr.keypad(False)
-    curses.echo()
-    curses.endwin()
-    
-    if game.is_won():
-        print("Won!!!")
-    else:
-        print("Lost :(")
+    wrapper(game,args)
+   
