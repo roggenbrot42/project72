@@ -50,7 +50,6 @@ class IllegalMoveException(Exception):
     pass
 
 class GameState:
-
     pp = PlayerItem(-1,-1)
     maze = None
     visited = None
@@ -60,7 +59,7 @@ class GameState:
     sizey = -1
     obama = False # Merkel
 
-    def move_player(self,xdir,ydir):
+    def move_player(self,xdir: int,ydir: int):
         x = self.pp.x+xdir
         y = self.pp.y+ydir
         self.obama = False
@@ -193,12 +192,12 @@ class AbstractPlayer:
     __metaclass__ = abc.ABCMeta
 
     @abc.abstractmethod
-    def play(self,file,stdscr,game):
+    def play(self,file,stdscr,game: GameState):
         pass
 
 class RandomPlayer(AbstractPlayer):
     @staticmethod
-    def check_visited(game,dx,dy):
+    def check_visited(game: GameState,dx: int,dy: int):
         mvx = game.pp.x + dx
         mvy = game.pp.y + dy
         if game.visited[mvy][mvx] >= 2:
@@ -206,10 +205,10 @@ class RandomPlayer(AbstractPlayer):
         else:
             return True
 
-    def play(self,file,stdscr,game):
+    def play(self,file,stdscr,game: GameState):
         filebase = file.tell()
         lost = 0
-        for i in range(1000):
+        for i in range(100000):
             file.seek(filebase)
             game.load(args.mazefile)
 
@@ -242,7 +241,7 @@ class RandomPlayer(AbstractPlayer):
 
                 game.render(stdscr)
                 stdscr.refresh()
-                time.sleep(1/3)
+                #time.sleep(1/120)
                 if game.is_won():
                     break
                 elif game.is_lost() or stuck == 4:
@@ -280,7 +279,7 @@ class HumanPlayer(AbstractPlayer):
                 stdscr.erase()
                 break
 
-def game(stdscr,args):
+def run_game(stdscr,args):
     curses.curs_set(0)
     curses.use_default_colors()
     game = GameState()
@@ -310,5 +309,4 @@ if __name__ == "__main__":
         print(version)
         raise Exception("Invalid filetype")
 
-    wrapper(game,args)
-   
+    wrapper(run_game,args)
