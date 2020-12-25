@@ -51,10 +51,34 @@ class Stone(GameItem):
 class IllegalMoveException(Exception):
     pass
 
+GridLocation = tuple[int,int]
+
+class Maze:
+    def __init__(self,width: int, height: int):
+        self.width = width
+        self.height = height
+        self.walls: list[tuple[int,int]] = []
+    
+    def in_bounds(self,id: GridLocation) -> bool:
+        (x,y) = id
+        return 0 <= x < self.width and 0 <= y < self.height
+    
+    def passable(self, id: GridLocation) -> bool:
+        return id not in self.walls
+
+    def neighbors(self, id: GridLocation): #define type!
+        (x,y) = id
+        neighbors = [(x+1,y), (x-1,y),(x,y-1), (x,y+1)]
+        if (x + y) % 2 == 0: neighbors.reverse() # S N W E
+        results = filter(self.in_bounds, neighbors)
+        results = filter(self.passable, results)
+        return results
+
 class GameState:
     pp = PlayerItem(-1,-1)
     maze = list(list())
-    visited = list(list())
+    maze_object: Maze
+    visited: dict[tuple[int,int]] = dict()
     stones = list()
     goals = list()
     sizex = -1
@@ -85,24 +109,26 @@ class GameState:
         except ValueError:
             pass
 
+        id = (self.pp.x,self.pp.y)
         self.pp.x = x
         self.pp.y = y
         if self.obama == False:
-            self.visited[y][x] += 1
+            if id in self.visited:
+                self.visited[id] += 1
+            else:
+                self.visited[id] = 1
         else:
             self.reset_visited()
     
     def reset_visited(self):
-        for i,row in enumerate(self.visited):
-            for c,val in enumerate(row):
-                if type(self.visited[i][c]) == int:
-                    self.visited[i][c] = 0
-        self.visited[self.pp.y][self.pp.x] = 1
+        self.visited = dict()
+        self.visited[(self.pp.x,self.pp.y)] = 0
 
 
     def load(self,file):
         sizex = int(file.readline())
         sizey = int(file.readline())
+        self.maze_object = Maze(sizex, sizey)
         maze = [['■' for x in range(sizex+2)] for y in range(sizey+2)]
         pp = PlayerItem(-1,-1)
         goals = list()
@@ -129,17 +155,20 @@ class GameState:
                         elif val == Goal.sym:
                             goals += [Goal(c,ln)]
                             line = line.replace(Goal.sym,".",1)
-
+            #old
             linelist = list(line)
             maze[ln][1:1+len(linelist)] = linelist
+            #new
+            r = ln-1
+            self.maze_object.walls += [(i,r) for i,v in enumerate(line) if v=='■']
+
             ln = ln+1
         if len(stones) != len(goals):
             raise Exception("Error: Number of goals and stones is not equal")
     
         self.maze = maze
-        self.visited = [[0 if el == '.' else el for el in row] for row in self.maze]
-        self.visited[pp.y][pp.x] = 1
         self.pp = pp
+        self.reset_visited()
         self.stones = stones
         self.goals = goals
         self.sizex = sizex
@@ -171,19 +200,10 @@ class GameState:
             screen.addstr(y, 0,"".join(line))
 
         color = curses.COLOR_BLACK
-        for y,line in enumerate(self.visited,0):
-            for x,place in enumerate(line):
-                if type(place) != int:
-                    continue
-                if place == 0:
-                    color = curses.COLOR_BLACK
-                elif place == 1:
-                    color = curses.COLOR_BLUE
-                elif place >= 2:
-                    color = curses.COLOR_RED
-                else:
-                    continue
-                screen.addch(y,x,f'{place}',color)
+        for key in self.visited:
+                (x,y) = key
+                screen.addch(y,x,f'{self.visited[key]}',color)
+    
         for g in self.goals:
             screen.addstr(g.y,g.x,Goal.sym)
         screen.addstr(self.pp.y,self.pp.x,PlayerItem.sym)
@@ -200,12 +220,11 @@ class AbstractPlayer:
 class RandomPlayer(AbstractPlayer):
     @staticmethod
     def check_visited(game: GameState,dx: int,dy: int):
-        mvx = game.pp.x + dx
-        mvy = game.pp.y + dy
-        if game.visited[mvy][mvx] >= 2:
-            return False
-        else:
+        (x,y) = (game.pp.x + dx,game.pp.y + dy)
+        if (x,y) not in game.visited:
             return True
+        else:
+            return game.visited.get((x,y)) < 2
 
     def play(self,file,stdscr,game: GameState):
         filebase = file.tell()
