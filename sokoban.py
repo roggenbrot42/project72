@@ -10,24 +10,26 @@ import abc
 class GameItem:
     x = -1
     y = -1
-    type = "None"
-    sym = "None"
+    type = str()
+    sym = str()
 
     def __init__(self,x,y):
         self.x = x
         self.y = y
     
-    def __eq__(self,other):
+    def __eq__(self,other) -> bool:
         if self.x == other.x and self.y == other.y:
             return True
         else:
             return False
-    def __lt__(self,other):
+
+    def __lt__(self,other) -> bool:
         if not isinstance(other, GameItem):
             return False
         else:
             return (self.x,self.y)<=(other.x,other.y)
-    def __str__(self):
+
+    def __str__(self) -> str:
         return self.sym
 
 class Goal(GameItem):
@@ -51,8 +53,8 @@ class IllegalMoveException(Exception):
 
 class GameState:
     pp = PlayerItem(-1,-1)
-    maze = None
-    visited = None
+    maze = list(list())
+    visited = list(list())
     stones = list()
     goals = list()
     sizex = -1
@@ -143,13 +145,13 @@ class GameState:
         self.sizex = sizex
         self.sizey = sizey
     
-    def is_won(self):
+    def is_won(self) -> bool:
         if self.stones == self.goals:
             return True
         else:
             return False
 
-    def is_lost(self):  #basically check for cornered stones
+    def is_lost(self) -> bool:  #basically check for cornered stones
         for st in self.stones:
             if st in self.goals:
                 continue
