@@ -7,27 +7,26 @@ import time
 import copy
 import abc
 
+class GridLocation(tuple):  
+    def __add__(self,other):
+        return GridLocation((self[0]+other[0],self[1]+other[1]))
+        
 class GameItem:
-    x = -1
-    y = -1
+    id = GridLocation((-1,-1))
     type = str()
     sym = str()
 
     def __init__(self,x,y):
-        self.x = x
-        self.y = y
+        self.id = GridLocation((x,y))
     
     def __eq__(self,other) -> bool:
-        if self.x == other.x and self.y == other.y:
-            return True
-        else:
-            return False
+        return self.id == other.id
 
     def __lt__(self,other) -> bool:
         if not isinstance(other, GameItem):
             return False
         else:
-            return (self.x,self.y)<=(other.x,other.y)
+            return (self.id[0],self.id[1])<=(other.id[0],other.id[1])
 
     def __str__(self) -> str:
         return self.sym
@@ -51,14 +50,17 @@ class Stone(GameItem):
 class IllegalMoveException(Exception):
     pass
 
-GridLocation = tuple[int,int]
-
 class Maze:
     def __init__(self,width: int, height: int):
         self.width = width
         self.height = height
-        self.walls: list[tuple[int,int]] = []
-    
+        self.walls: list[GridLocation] = []
+        self.walls += [(x,0) for x in range(0,width)]
+        for y in range(0,height):
+            for x in [0, width-1]:
+                self.walls += [(x,y)]
+        self.walls += [(x,height-1) for x in range(0,width)]
+
     def in_bounds(self,id: GridLocation) -> bool:
         (x,y) = id
         return 0 <= x < self.width and 0 <= y < self.height
@@ -70,109 +72,107 @@ class Maze:
         (x,y) = id
         neighbors = [(x+1,y), (x-1,y),(x,y-1), (x,y+1)]
         if (x + y) % 2 == 0: neighbors.reverse() # S N W E
-        results = filter(self.in_bounds, neighbors)
-        results = filter(self.passable, results)
+        results = [i for i in neighbors if self.in_bounds(i)]
+        results = [i for i in results if self.passable(i)]
         return results
 
 class GameState:
-    pp = PlayerItem(-1,-1)
-    maze = list(list())
-    maze_object: Maze
+    init_pp = PlayerItem(0,0)
+    pp = PlayerItem(0,0)
+    maze: Maze
     visited: dict[tuple[int,int]] = dict()
+    init_stones = list()
     stones = list()
     goals = list()
-    sizex = -1
-    sizey = -1
     obama = False # Merkel
+    moves = 0
+
+    def __init__(self,stdscr):
+        self.stdscr = stdscr
 
     def move_player(self,xdir: int,ydir: int):
-        x = self.pp.x+xdir
-        y = self.pp.y+ydir
+        id: GridLocation = self.pp.id + GridLocation((xdir,ydir))#(self.pp.id[0]+xdir,self.pp.id[1]+ydir)
         self.obama = False
 
-        if x > self.sizex or x < 1:
-            raise IllegalMoveException
-        if y > self.sizey or y < 1:
+        if not self.maze.in_bounds(id):
             raise IllegalMoveException
         
-        if self.maze[y][x] == '■':
+        if not self.maze.passable(id):
             raise IllegalMoveException
         try:
-            idx = self.stones.index(Stone(x,y))
+            idx = self.stones.index(Stone(id[0],id[1]))
             stone = self.stones[idx]
-            if self.maze[y+ydir][x+xdir] == '■': 
+            id2 = (id[0]+xdir,id[1]+ydir)
+            if not self.maze.passable(id2): #check if maze itself is passable
+                raise IllegalMoveException
+            elif Stone(id2[0],id2[1]) in self.stones:
                 raise IllegalMoveException
             else:
-                stone.x = x + xdir
-                stone.y = y + ydir
+                stone.id = (id[0] + xdir,id[1] + ydir)
                 self.obama = True #we changed something
         except ValueError:
             pass
 
-        id = (self.pp.x,self.pp.y)
-        self.pp.x = x
-        self.pp.y = y
+        self.pp.id = id
+        self.moves += 1
+
+        id2 = self.pp.id
         if self.obama == False:
-            if id in self.visited:
-                self.visited[id] += 1
+            if id2 in self.visited:
+                self.visited[id2] += 1
             else:
-                self.visited[id] = 1
+                self.visited[id2] = 1
         else:
             self.reset_visited()
+        
     
     def reset_visited(self):
         self.visited = dict()
-        self.visited[(self.pp.x,self.pp.y)] = 0
+        self.visited[self.pp.id] = 0
 
 
     def load(self,file):
-        sizex = int(file.readline())
-        sizey = int(file.readline())
-        self.maze_object = Maze(sizex, sizey)
-        maze = [['■' for x in range(sizex+2)] for y in range(sizey+2)]
-        pp = PlayerItem(-1,-1)
-        goals = list()
-        stones = list()
+        width = int(file.readline()) + 2 #include walls
+        height = int(file.readline()) +2
+        self.maze = Maze(width, height)
 
-        pat_np = re.compile("[.■]{{1,{}}}".format(sizex))
-        pat_p = re.compile("[.■"+PlayerItem.sym+Stone.sym+Goal.sym+"]{{1,{}}}".format(sizex))
+        pat_np = re.compile("[.■]{{1,{}}}".format(width))
+        pat_p = re.compile("[.■"+PlayerItem.sym+Stone.sym+Goal.sym+"]{{1,{}}}".format(width))
 
-        ln = 1
+        y = 1 #initial y to account for walls
+        initx = 1 #initial x
         for tmp in file:
             line = tmp.rstrip()
             if pat_np.fullmatch(line) == None:
                 if pat_p.fullmatch(line) == None:
-                    raise Exception("Malformed row, invalid character or length! Line number: {} length: {}".format(ln,len(line)))
+                    raise Exception("Malformed row, invalid character or length! Line number: {} length: {}".format(y,len(line)))
                 else:
-                    for c,val in enumerate(line,1):
+                    for x,val in enumerate(line,initx):
                         if val == PlayerItem.sym:
-                            pp.x = c
-                            pp.y = ln
-                            line = line.replace(PlayerItem.sym,".")
+                            self.pp = PlayerItem(x,y)
+                            self.init_pp = PlayerItem(x,y)
+                            #line = line.replace(PlayerItem.sym,".")
                         elif val == Stone.sym:
-                            stones += [Stone(c,ln)]
-                            line = line.replace(Stone.sym,".",1)
+                            self.stones += [Stone(x,y)]
+                            self.init_stones += [Stone(x,y)]
+                            #line = line.replace(Stone.sym,".",1)
                         elif val == Goal.sym:
-                            goals += [Goal(c,ln)]
-                            line = line.replace(Goal.sym,".",1)
-            #old
-            linelist = list(line)
-            maze[ln][1:1+len(linelist)] = linelist
-            #new
-            r = ln-1
-            self.maze_object.walls += [(i,r) for i,v in enumerate(line) if v=='■']
+                            self.goals += [Goal(x,y)]
+                            #line = line.replace(Goal.sym,".",1)
 
-            ln = ln+1
-        if len(stones) != len(goals):
+            self.maze.walls += [(x+initx,y) for x,v in enumerate(line) if v=='■']
+
+            y = y+1
+        if len(self.stones) != len(self.goals):
             raise Exception("Error: Number of goals and stones is not equal")
-    
-        self.maze = maze
-        self.pp = pp
         self.reset_visited()
-        self.stones = stones
-        self.goals = goals
-        self.sizex = sizex
-        self.sizey = sizey
+    
+    def reset(self):
+        self.pp = self.init_pp #immutable
+        self.stones = copy.deepcopy(self.init_stones)
+        self.reset_visited()
+        self.obama = False
+        self.moves = 0
     
     def is_won(self) -> bool:
         if self.stones == self.goals:
@@ -184,138 +184,141 @@ class GameState:
         for st in self.stones:
             if st in self.goals:
                 continue
-            if self.maze[st.y-1][st.x] == '■' and self.maze[st.y][st.x-1] == '■': #top left corner
-                return True
-            if self.maze[st.y-1][st.x] == '■' and self.maze[st.y][st.x+1] == '■': #top right corner
-                return True
-            if self.maze[st.y+1][st.x] == '■' and self.maze[st.y][st.x+1] == '■': #bottom right corner
-                return True
-            if self.maze[st.y+1][st.x] == '■' and self.maze[st.y][st.x-1] == '■': #bottom left corner
-                return True
-        return False
+            corners = [[(st.id[0],st.id[1]-1),(st.id[0]-1,st.id[1])],
+                        [(st.id[0],st.id[1]-1),(st.id[0]+1,st.id[1])],
+                        [(st.id[0],st.id[1]+1),(st.id[0]+1,st.id[1])],
+                        [(st.id[0],st.id[1]+1),(st.id[0]-1,st.id[1])]]
+            for corner in corners:
+                if not self.maze.passable(corner[0]) and not self.maze.passable(corner[1]):
+                    return True
+            return False
     
-    def render(self,screen): #this is shit, should be replaced by render tree for more complex games
-
-        for y,line in enumerate(self.maze,0):
-            screen.addstr(y, 0,"".join(line))
-
+    def render(self): #this is shit, should be replaced by render tree for more complex games
+        #render empty spaces
+        for i in range(0,self.maze.height):
+            self.stdscr.addstr(i, 0,"."*self.maze.width)
+        #render walls
+        for w in self.maze.walls:
+            self.stdscr.addstr(w[1],w[0],'■')
+        #render visited layer
         color = curses.COLOR_BLACK
         for key in self.visited:
                 (x,y) = key
-                screen.addch(y,x,f'{self.visited[key]}',color)
-    
+                self.stdscr.addstr(y,x,f'{self.visited[key]}',color)
+        #render goals
         for g in self.goals:
-            screen.addstr(g.y,g.x,Goal.sym)
-        screen.addstr(self.pp.y,self.pp.x,PlayerItem.sym)
+            self.stdscr.addstr(g.id[1],g.id[0],Goal.sym)
+        #render player
+        self.stdscr.addstr(self.pp.id[1],self.pp.id[0],PlayerItem.sym)
+        #render stones
         for st in self.stones:
-            screen.addstr(st.y,st.x,Stone.sym)
+            self.stdscr.addstr(st.id[1],st.id[0],Stone.sym)
+        
+        #render UI elements:
+        self.stdscr.addstr(self.maze.height,0,"Moves: {}".format(self.moves))
+
+        self.stdscr.refresh()
 
 class AbstractPlayer:
     __metaclass__ = abc.ABCMeta
 
+    def __init__(self, game: GameState):
+        self.game = game
+
     @abc.abstractmethod
-    def play(self,file,stdscr,game: GameState):
+    def play(self):
         pass
 
 class RandomPlayer(AbstractPlayer):
     @staticmethod
-    def check_visited(game: GameState,dx: int,dy: int):
-        (x,y) = (game.pp.x + dx,game.pp.y + dy)
-        if (x,y) not in game.visited:
+    def check_visited(game: GameState,id):
+        if id not in game.visited:
             return True
         else:
-            return game.visited.get((x,y)) < 2
+            return game.visited.get(id) < 2
 
-    def play(self,file,stdscr,game: GameState):
-        filebase = file.tell()
+    def play(self):
         lost = 0
         for i in range(100000):
-            file.seek(filebase)
-            game.load(args.mazefile)
+            self.game.reset()
 
-            game.render(stdscr)
-            stdscr.refresh()
-            stdscr.addstr(13,0,"Lost: {}".format(lost))
+            self.game.render()
             
             random.seed(time.time())
 
             stuck = 0
 
-            while game.is_won() == False:
+            while self.game.is_won() == False:
                 # Computer Random Player
-            
-                mv = random.randint(0,3)
-            
+
+                neighbors = self.game.maze.neighbors(self.game.pp.id)
+                random.shuffle(neighbors)
+                mv = neighbors[0]
+
                 try:
-                    if mv == 0 and RandomPlayer.check_visited(game,0,-1): #down
-                        game.move_player(0,-1)
-                    elif mv == 1 and RandomPlayer.check_visited(game,0,1): #up
-                        game.move_player(0,1)
-                    elif mv == 2 and RandomPlayer.check_visited(game,-1,0): #left
-                        game.move_player(-1,0)
-                    elif mv == 3 and RandomPlayer.check_visited(game,1,0): #right
-                        game.move_player(1,0)
+                    if RandomPlayer.check_visited(self.game,mv):
+                        self.game.move_player(mv[0]-self.game.pp.id[0],mv[1]-self.game.pp.id[1])
                     else:
                         stuck += 1
-                except (IllegalMoveException,TypeError):
-                    continue
+                except:
+                    stuck += 1
 
-                game.render(stdscr)
-                stdscr.refresh()
+                self.game.render()
                 #time.sleep(1/120)
-                if game.is_won():
+                if self.game.is_won():
                     break
-                elif game.is_lost() or stuck == 4:
+                elif self.game.is_lost() or stuck == 4:
                     lost += 1
                     break
-class HumanPlayer(AbstractPlayer):
-    def play(self,file,stdscr,game):
-        game.load(args.mazefile)
 
-        game.render(stdscr)
-        stdscr.refresh()
+class HumanPlayer(AbstractPlayer):
+    def play(self):
+        self.game.render()
         while True:
-            c = stdscr.getch()
+            c = self.game.stdscr.getch()
             try:
                 if c == curses.KEY_UP:
-                    game.move_player(0,-1)
+                    self.game.move_player(0,-1)
                 elif c == curses.KEY_DOWN:
-                    game.move_player(0,1)
+                    self.game.move_player(0,1)
                 elif c == curses.KEY_LEFT:
-                    game.move_player(-1,0)
+                    self.game.move_player(-1,0)
                 elif c == curses.KEY_RIGHT:
-                    game.move_player(1,0)
+                    self.game.move_player(1,0)
                 elif c == ord('q'):
                     break  # Exit the while loop
                 else:
                     pass
             except IllegalMoveException:
                 pass
-            game.render(stdscr)
+            self.game.render()
 
-            if game.is_won():
-                stdscr.erase()
+            if self.game.is_won():
+                self.game.screens_erase()
                 break
-            if game.is_lost():
-                stdscr.erase()
+            if self.game.is_lost():
+                self.game.screens_erase()
                 break
 
 def run_game(stdscr,args):
     curses.curs_set(0)
     curses.use_default_colors()
-    game = GameState()
+    game = GameState(stdscr)
+    game.load(args.mazefile)
 
     if args.human == True:
-        player = HumanPlayer()
+        player = HumanPlayer(game)
     else:
-        player = RandomPlayer()
+        player = RandomPlayer(game)
     
-    player.play(args.mazefile,stdscr,game)
-    
-    if game.is_won():
-        print("Won!!!")
-    else:
-        print("Lost :(")
+    while True:
+        player.play()
+        if game.is_won():
+            stdscr.addstr(0,0,"Won!!!")
+        else:
+            stdscr.addstr(0,0,"Lost :(")
+        if stdscr.getch() == 'q':
+            return
 
 if __name__ == "__main__":
     print("Project72 Sokoban Game Solver")
