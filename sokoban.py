@@ -10,6 +10,8 @@ import abc
 class GridLocation(tuple):  
     def __add__(self,other):
         return GridLocation((self[0]+other[0],self[1]+other[1]))
+    def __sub__(self,other):
+        return GridLocation((self[0]-other[0],self[1]-other[1]))
         
 class GameItem:
     id = GridLocation((-1,-1))
@@ -60,6 +62,7 @@ class Maze:
             for x in [0, width-1]:
                 self.walls += [(x,y)]
         self.walls += [(x,height-1) for x in range(0,width)]
+        self.calculate_corners()
 
     def in_bounds(self,id: GridLocation) -> bool:
         (x,y) = id
@@ -68,13 +71,31 @@ class Maze:
     def passable(self, id: GridLocation) -> bool:
         return id not in self.walls
 
-    def neighbors(self, id: GridLocation): #define type!
+    def neighbors(self, id: GridLocation) -> list[GridLocation]: #define type!
         (x,y) = id
         neighbors = [(x+1,y), (x-1,y),(x,y-1), (x,y+1)]
+        neighbors = [GridLocation(x) for x in neighbors]
         if (x + y) % 2 == 0: neighbors.reverse() # S N W E
         results = [i for i in neighbors if self.in_bounds(i)]
         results = [i for i in results if self.passable(i)]
         return results
+ 
+    def calculate_corners(self) -> list[GridLocation]:
+        tmp: list[GridLocation] = []
+        for y in range(1,self.height):
+            for x in range(1,self.width):
+                tmp.append(GridLocation((x,y)))
+        ids = [p for p in tmp if p not in self.walls]
+        corners = []
+        for id in ids:
+            corn = [[(id[0],id[1]-1),(id[0]-1,id[1])],
+                            [(id[0],id[1]-1),(id[0]+1,id[1])],
+                            [(id[0],id[1]+1),(id[0]+1,id[1])],
+                            [(id[0],id[1]+1),(id[0]-1,id[1])]]
+            for cor in corn:
+                if not self.passable(cor[0]) and not self.passable(cor[1]):
+                    corners.append(GridLocation(id))
+        self.corners = corners
 
 class GameState:
     init_pp = PlayerItem(0,0)
@@ -90,8 +111,8 @@ class GameState:
     def __init__(self,stdscr):
         self.stdscr = stdscr
 
-    def move_player(self,xdir: int,ydir: int):
-        id: GridLocation = self.pp.id + GridLocation((xdir,ydir))#(self.pp.id[0]+xdir,self.pp.id[1]+ydir)
+    def move_player(self,dir: GridLocation):
+        id: GridLocation = self.pp.id + dir
         self.obama = False
 
         if not self.maze.in_bounds(id):
@@ -102,13 +123,13 @@ class GameState:
         try:
             idx = self.stones.index(Stone(id[0],id[1]))
             stone = self.stones[idx]
-            id2 = (id[0]+xdir,id[1]+ydir)
+            id2 = id + dir
             if not self.maze.passable(id2): #check if maze itself is passable
                 raise IllegalMoveException
             elif Stone(id2[0],id2[1]) in self.stones:
                 raise IllegalMoveException
             else:
-                stone.id = (id[0] + xdir,id[1] + ydir)
+                stone.id = id + dir
                 self.obama = True #we changed something
         except ValueError:
             pass
@@ -133,7 +154,7 @@ class GameState:
 
     def load(self,file):
         width = int(file.readline()) + 2 #include walls
-        height = int(file.readline()) +2
+        height = int(file.readline()) + 2
         self.maze = Maze(width, height)
 
         pat_np = re.compile("[.■]{{1,{}}}".format(width))
@@ -165,6 +186,7 @@ class GameState:
             y = y+1
         if len(self.stones) != len(self.goals):
             raise Exception("Error: Number of goals and stones is not equal")
+        self.maze.calculate_corners()
         self.reset_visited()
     
     def reset(self):
@@ -201,10 +223,10 @@ class GameState:
         for w in self.maze.walls:
             self.stdscr.addstr(w[1],w[0],'■')
         #render visited layer
-        color = curses.COLOR_BLACK
+        color = curses.COLOR_RED
         for key in self.visited:
                 (x,y) = key
-                self.stdscr.addstr(y,x,f'{self.visited[key]}',color)
+                self.stdscr.addstr(y,x,f'{self.visited[key]}',curses.color_pair(1))
         #render goals
         for g in self.goals:
             self.stdscr.addstr(g.id[1],g.id[0],Goal.sym)
@@ -257,7 +279,7 @@ class RandomPlayer(AbstractPlayer):
 
                 try:
                     if RandomPlayer.check_visited(self.game,mv):
-                        self.game.move_player(mv[0]-self.game.pp.id[0],mv[1]-self.game.pp.id[1])
+                        self.game.move_player(mv-self.game.pp.id)
                     else:
                         stuck += 1
                 except:
@@ -271,6 +293,117 @@ class RandomPlayer(AbstractPlayer):
                     lost += 1
                     break
 
+class LocationUnreachableException(Exception):
+    pass
+
+class SimplePlayer(AbstractPlayer):
+    def breadthFirst(self,start: GridLocation, goal: GridLocation, ignore_corners: bool=False) -> list[GridLocation]:
+        
+        openNodes = [start]
+        parentNodes = dict()
+
+        while openNodes:
+            current = openNodes.pop()
+
+            if current == goal:
+                break
+
+            neighbors = self.game.maze.neighbors(current)
+            neighbors = [x for x in neighbors if Stone(x[0],x[1]) not in self.game.stones]
+            for next in neighbors:
+                if next in self.game.maze.corners and next != goal and ignore_corners == True:
+                    continue
+                if next not in parentNodes:
+                    openNodes.append(next)
+                    parentNodes[next] = GridLocation(current)
+        
+        path = [goal]
+        try:
+            if parentNodes:
+                current = parentNodes.pop(goal)
+        except:
+            return []
+        while True:
+            if current == start:
+                break
+            path.insert(0,current)
+            current = parentNodes.pop(current)
+            if not current:
+                break
+        return path
+    
+    @staticmethod
+    def path2moves(path: list[GridLocation]) -> list[GridLocation]:
+        loc = GridLocation((0,0))
+        moves = [loc]
+        loc = path[0]
+        for item in path[1:]:
+            moves.append(item - loc)
+            loc = item
+        return moves
+
+    def move_along_path(self,path: list[GridLocation]):
+        for mv in path:
+            dir = mv - self.game.pp.id
+            self.game.move_player(dir)
+
+    def play(self):
+        self.game.render()
+        #1 Select a stone to which you want to move
+        stones = self.game.stones.copy()
+        while stones:
+            stone = stones[0]
+            stone_init_id = stone.id
+
+            #2 Select a goal onto which you want to move the stone
+            goals = [x for x in self.game.goals if x not in self.game.stones]
+            playerpos = self.game.pp.id
+            
+            while goals:
+                goal = goals.pop()
+                #see if there is a solution from the current stone to the current goal
+                path = self.breadthFirst(stone.id, goal.id,True)
+                if path:
+                    dir = path[0] - stone.id
+                else:
+                    continue #no solution for this stone yet
+
+                #see if we can move to the initial place at the stone
+                place = stone.id - dir
+                if place in self.game.maze.neighbors(stone.id): #place is not in wall
+                    tmpath = self.breadthFirst(self.game.pp.id,place)
+                    if not tmpath: #solution does not exist
+                        continue
+                    else:
+                        self.move_along_path(tmpath)
+                    self.game.render()
+                else:
+                    continue #no solution for this goal yet
+                    # TODO: try moving stone to the side to see if we find a solution
+
+                for mv in path:
+                    dir = mv - stone.id
+                    pushpoint = stone.id - dir
+                    if pushpoint == self.game.pp.id: #no direction change
+                        self.game.move_player(dir)
+                    else: #direction change
+                        tmpath = self.breadthFirst(self.game.pp.id, pushpoint)
+                        if tmpath:
+                            self.move_along_path(tmpath)
+                            self.game.move_player(dir)
+                        else: #impossible to move along this path, try pushing further
+                            dir2 = stone.id - self.game.pp.id
+                            try:
+                                self.game.move_player(dir2)
+                            except:
+                                pass
+                    self.game.render()
+            if stone in self.game.goals:
+                stones.remove(stone)
+            else:
+                stone.id = stone_init_id
+                self.game.pp.id = playerpos
+
 class HumanPlayer(AbstractPlayer):
     def play(self):
         self.game.render()
@@ -278,13 +411,13 @@ class HumanPlayer(AbstractPlayer):
             c = self.game.stdscr.getch()
             try:
                 if c == curses.KEY_UP:
-                    self.game.move_player(0,-1)
+                    self.game.move_player(GridLocation((0,-1)))
                 elif c == curses.KEY_DOWN:
-                    self.game.move_player(0,1)
+                    self.game.move_player(GridLocation((0,1)))
                 elif c == curses.KEY_LEFT:
-                    self.game.move_player(-1,0)
+                    self.game.move_player(GridLocation((-1,0)))
                 elif c == curses.KEY_RIGHT:
-                    self.game.move_player(1,0)
+                    self.game.move_player(GridLocation((1,0)))
                 elif c == ord('q'):
                     break  # Exit the while loop
                 else:
@@ -294,10 +427,8 @@ class HumanPlayer(AbstractPlayer):
             self.game.render()
 
             if self.game.is_won():
-                self.game.screens_erase()
                 break
             if self.game.is_lost():
-                self.game.screens_erase()
                 break
 
 def run_game(stdscr,args):
@@ -306,10 +437,15 @@ def run_game(stdscr,args):
     game = GameState(stdscr)
     game.load(args.mazefile)
 
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(1, 15, 6)
+    curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_CYAN)
+
     if args.human == True:
         player = HumanPlayer(game)
     else:
-        player = RandomPlayer(game)
+        player = SimplePlayer(game)
     
     while True:
         player.play()
@@ -326,6 +462,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('mazefile', type=argparse.FileType('r',encoding='utf8'))
     parser.add_argument('--human',action='store_true',help="switch to human player")
+    parser.add_argument('--test-curses', action='store_true',help='test curses features')
     args = parser.parse_args()
 
     version = args.mazefile.readline().rstrip()
